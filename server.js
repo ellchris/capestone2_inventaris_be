@@ -455,6 +455,223 @@ app.post('/api/login', (req, res) => {
 
 });
 
+// ==========================================
+// KEPALA LAB PROCUREMENT ENDPOINTS
+// ==========================================
+
+// GET ALL ITEMS (for replacement selection)
+app.get('/api/items', (req, res) => {
+    db.query('SELECT * FROM items', (err, results) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, data: results });
+    });
+});
+
+// GET ALL PROCUREMENTS (optional filter by user_id)
+app.get('/api/procurements', (req, res) => {
+    const userId = req.query.user_id;
+    let query = 'SELECT * FROM procurements';
+    let params = [];
+    if (userId) {
+        query += ' WHERE user_id = ?';
+        params.push(userId);
+    }
+    query += ' ORDER BY created_at DESC';
+    
+    db.query(query, params, (err, results) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, data: results });
+    });
+});
+
+// GET PROCUREMENT DETAIL WITH ITEMS
+app.get('/api/procurements/:id', (req, res) => {
+    const { id } = req.params;
+    db.query('SELECT * FROM procurements WHERE id = ?', [id], (err, results) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ success: false, message: 'Procurement not found' });
+        }
+        const procurement = results[0];
+        
+        const itemsQuery = `
+            SELECT pi.*, i.nama_barang as replaced_item_name 
+            FROM procurement_items pi 
+            LEFT JOIN items i ON pi.replaced_item_id = i.id 
+            WHERE pi.procurement_id = ?
+        `;
+        db.query(itemsQuery, [id], (err, itemsResults) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: err.message });
+            }
+            procurement.items = itemsResults;
+            res.json({ success: true, data: procurement });
+        });
+    });
+});
+
+// POST CREATE PROCUREMENT
+app.post('/api/procurements', (req, res) => {
+    const { user_id, tahun_anggaran, items } = req.body;
+    
+    db.beginTransaction((err) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        
+        const procQuery = 'INSERT INTO procurements (user_id, tahun_anggaran, status) VALUES (?, ?, ?)';
+        db.query(procQuery, [user_id, tahun_anggaran, 'draft'], (err, result) => {
+            if (err) {
+                return db.rollback(() => {
+                    res.status(500).json({ success: false, error: err.message });
+                });
+            }
+            const procurementId = result.insertId;
+            
+            if (!items || items.length === 0) {
+                return db.commit((err) => {
+                    if (err) {
+                        return db.rollback(() => {
+                            res.status(500).json({ success: false, error: err.message });
+                        });
+                    }
+                    res.json({ success: true, message: 'Procurement draft created', id: procurementId });
+                });
+            }
+            
+            const itemQuery = `
+                INSERT INTO procurement_items 
+                (procurement_id, nama_barang, harga, jumlah, link_pembelian, is_replacement, replaced_item_id, status_item) 
+                VALUES ?
+            `;
+            const values = items.map(item => [
+                procurementId,
+                item.nama_barang,
+                item.harga,
+                item.jumlah,
+                item.link_pembelian,
+                item.is_replacement ? 1 : 0,
+                item.is_replacement ? item.replaced_item_id : null,
+                'pending'
+            ]);
+            
+            db.query(itemQuery, [values], (err, result) => {
+                if (err) {
+                    return db.rollback(() => {
+                        res.status(500).json({ success: false, error: err.message });
+                    });
+                }
+                
+                db.commit((err) => {
+                    if (err) {
+                        return db.rollback(() => {
+                            res.status(500).json({ success: false, error: err.message });
+                        });
+                    }
+                    res.json({ success: true, message: 'Procurement draft created with items', id: procurementId });
+                });
+            });
+        });
+    });
+});
+
+// PUT UPDATE PROCUREMENT
+app.put('/api/procurements/:id', (req, res) => {
+    const { id } = req.params;
+    const { tahun_anggaran, items } = req.body;
+    
+    db.query('SELECT status FROM procurements WHERE id = ?', [id], (err, results) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ success: false, message: 'Procurement not found' });
+        }
+        if (results[0].status === 'locked') {
+            return res.status(400).json({ success: false, message: 'Cannot edit a locked draft' });
+        }
+        
+        db.beginTransaction((err) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            
+            db.query('UPDATE procurements SET tahun_anggaran = ? WHERE id = ?', [tahun_anggaran, id], (err) => {
+                if (err) {
+                    return db.rollback(() => {
+                        res.status(500).json({ success: false, error: err.message });
+                    });
+                }
+                
+                db.query('DELETE FROM procurement_items WHERE procurement_id = ?', [id], (err) => {
+                    if (err) {
+                        return db.rollback(() => {
+                            res.status(500).json({ success: false, error: err.message });
+                        });
+                    }
+                    
+                    if (!items || items.length === 0) {
+                        return db.commit((err) => {
+                            if (err) {
+                                return db.rollback(() => {
+                                    res.status(500).json({ success: false, error: err.message });
+                                });
+                            }
+                            res.json({ success: true, message: 'Procurement updated' });
+                        });
+                    }
+                    
+                    const itemQuery = `
+                        INSERT INTO procurement_items 
+                        (procurement_id, nama_barang, harga, jumlah, link_pembelian, is_replacement, replaced_item_id, status_item) 
+                        VALUES ?
+                    `;
+                    const values = items.map(item => [
+                        id,
+                        item.nama_barang,
+                        item.harga,
+                        item.jumlah,
+                        item.link_pembelian,
+                        item.is_replacement ? 1 : 0,
+                        item.is_replacement ? item.replaced_item_id : null,
+                        'pending'
+                    ]);
+                    
+                    db.query(itemQuery, [values], (err) => {
+                        if (err) {
+                            return db.rollback(() => {
+                                res.status(500).json({ success: false, error: err.message });
+                            });
+                        }
+                        
+                        db.commit((err) => {
+                            if (err) {
+                                return db.rollback(() => {
+                                    res.status(500).json({ success: false, error: err.message });
+                                });
+                            }
+                            res.json({ success: true, message: 'Procurement updated with items' });
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+// PUT LOCK PROCUREMENT
+app.put('/api/procurements/:id/lock', (req, res) => {
+    const { id } = req.params;
+    db.query("UPDATE procurements SET status = 'locked' WHERE id = ?", [id], (err, result) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, message: 'Procurement locked successfully' });
+    });
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
