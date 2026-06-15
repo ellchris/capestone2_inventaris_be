@@ -672,6 +672,89 @@ app.put('/api/procurements/:id/lock', (req, res) => {
     });
 });
 
+
+
+// APPROVE PROCUREMENT
+app.put('/api/procurements/:id/approve', (req, res) => {
+
+    const { id } = req.params;
+
+    db.query(
+        "UPDATE procurements SET approval_status = 'approved' WHERE id = ?",
+        [id],
+        (err, result) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Draft berhasil disetujui'
+            });
+
+        }
+    );
+
+});
+
+// REJECT PROCUREMENT
+app.put('/api/procurements/:id/reject', (req, res) => {
+
+    const { id } = req.params;
+
+    db.query(
+        "UPDATE procurements SET approval_status = 'rejected' WHERE id = ?",
+        [id],
+        (err, result) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Draft berhasil ditolak'
+            });
+
+        }
+    );
+
+});
+
+// FINALIZE PROCUREMENT
+app.put('/api/procurements/:id/finalize', (req, res) => {
+
+    const { id } = req.params;
+
+    db.query(
+        "UPDATE procurements SET approval_status = 'finalized' WHERE id = ?",
+        [id],
+        (err, result) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Draft berhasil difinalisasi'
+            });
+
+        }
+    );
+
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
