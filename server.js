@@ -25,6 +25,27 @@ db.connect((err) => {
     }
 
     console.log('Connected to MySQL Database!');
+
+    // Safely add foto_qr to items
+    db.query("ALTER TABLE items ADD COLUMN foto_qr VARCHAR(255) NULL", (err) => {
+        if (err && err.errno !== 1060) {
+            console.error('Error adding foto_qr to items:', err.message);
+        }
+    });
+
+    // Safely add registered_item_id to procurement_items
+    db.query("ALTER TABLE procurement_items ADD COLUMN registered_item_id INT NULL", (err) => {
+        if (err && err.errno !== 1060) {
+            console.error('Error adding registered_item_id to procurement_items:', err.message);
+        }
+    });
+
+    // Safely add approval_status to procurements
+    db.query("ALTER TABLE procurements ADD COLUMN approval_status VARCHAR(50) DEFAULT 'pending'", (err) => {
+        if (err && err.errno !== 1060) {
+            console.error('Error adding approval_status to procurements:', err.message);
+        }
+    });
 });
 
 // HEALTH CHECK
@@ -672,6 +693,37 @@ app.put('/api/procurements/:id/lock', (req, res) => {
     });
 });
 
+// DELETE PROCUREMENT (only drafts)
+app.delete('/api/procurements/:id', (req, res) => {
+    const { id } = req.params;
+    
+    db.query('SELECT status FROM procurements WHERE id = ?', [id], (err, results) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (results.length === 0) {
+            return res.status(404).json({ success: false, message: 'Procurement not found' });
+        }
+        if (results[0].status !== 'draft') {
+            return res.status(400).json({ success: false, message: 'Only draft procurements can be deleted' });
+        }
+        
+        // Delete related items first to bypass foreign key constraint restrictions
+        db.query('DELETE FROM procurement_items WHERE procurement_id = ?', [id], (err, result) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: err.message });
+            }
+            
+            db.query('DELETE FROM procurements WHERE id = ?', [id], (err, result) => {
+                if (err) {
+                    return res.status(500).json({ success: false, error: err.message });
+                }
+                res.json({ success: true, message: 'Procurement draft deleted successfully' });
+            });
+        });
+    });
+});
+
 
 
 // APPROVE PROCUREMENT
@@ -754,6 +806,85 @@ app.put('/api/procurements/:id/finalize', (req, res) => {
     );
 
 });
+
+// ==========================================
+// STAF ADMIN API ENDPOINTS
+// ==========================================
+
+// RECEIVE PROCUREMENT ITEM
+app.put('/api/procurement-items/:id/receive', (req, res) => {
+    const { id } = req.params;
+    const { tanggal_diterima } = req.body;
+    db.query(
+        "UPDATE procurement_items SET status_item = 'received', tanggal_diterima = ? WHERE id = ?",
+        [tanggal_diterima, id],
+        (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            res.json({ success: true, message: 'Barang berhasil ditandai sebagai diterima' });
+        }
+    );
+});
+
+// GET ITEM BY ID
+app.get('/api/items/:id', (req, res) => {
+    const { id } = req.params;
+    db.query("SELECT * FROM items WHERE id = ?", [id], (err, results) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        if (results.length === 0) return res.status(404).json({ success: false, message: 'Barang tidak ditemukan' });
+        res.json({ success: true, data: results[0] });
+    });
+});
+
+// CREATE NEW ITEM
+app.post('/api/items', (req, res) => {
+    const { room_id, uuid_qr, nama_barang, jenis, stok, status, foto_qr } = req.body;
+    db.query(
+        "INSERT INTO items (room_id, uuid_qr, nama_barang, jenis, stok, status, foto_qr) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [room_id, uuid_qr, nama_barang, jenis, stok, status, foto_qr],
+        (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            res.status(201).json({ success: true, message: 'Barang berhasil didaftarkan ke inventaris', insertId: result.insertId });
+        }
+    );
+});
+
+// UPDATE EXISTING ITEM
+app.put('/api/items/:id', (req, res) => {
+    const { id } = req.params;
+    const { room_id, uuid_qr, nama_barang, jenis, stok, status, foto_qr } = req.body;
+    db.query(
+        "UPDATE items SET room_id = ?, uuid_qr = ?, nama_barang = ?, jenis = ?, stok = ?, status = ?, foto_qr = ? WHERE id = ?",
+        [room_id, uuid_qr, nama_barang, jenis, stok, status, foto_qr, id],
+        (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            res.json({ success: true, message: 'Barang inventaris berhasil diupdate' });
+        }
+    );
+});
+
+// DELETE ITEM
+app.delete('/api/items/:id', (req, res) => {
+    const { id } = req.params;
+    db.query("DELETE FROM items WHERE id = ?", [id], (err, result) => {
+        if (err) return res.status(500).json({ success: false, error: err.message });
+        res.json({ success: true, message: 'Barang inventaris berhasil dihapus' });
+    });
+});
+
+// LINK PROCUREMENT ITEM TO REGISTERED ITEM ID
+app.put('/api/procurement-items/:id/link-item', (req, res) => {
+    const { id } = req.params;
+    const { registered_item_id } = req.body;
+    db.query(
+        "UPDATE procurement_items SET registered_item_id = ? WHERE id = ?",
+        [registered_item_id, id],
+        (err, result) => {
+            if (err) return res.status(500).json({ success: false, error: err.message });
+            res.json({ success: true, message: 'Item linked to registered_item_id' });
+        }
+    );
+});
+
 
 const PORT = process.env.PORT || 5000;
 
