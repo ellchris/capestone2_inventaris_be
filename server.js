@@ -476,9 +476,9 @@ app.post('/api/login', (req, res) => {
 
 });
 
-// ==========================================
+
 // KEPALA LAB PROCUREMENT ENDPOINTS
-// ==========================================
+
 
 // GET ALL ITEMS (for replacement selection)
 app.get('/api/items', (req, res) => {
@@ -807,9 +807,9 @@ app.put('/api/procurements/:id/finalize', (req, res) => {
 
 });
 
-// ==========================================
+
 // STAF ADMIN API ENDPOINTS
-// ==========================================
+
 
 // RECEIVE PROCUREMENT ITEM
 app.put('/api/procurement-items/:id/receive', (req, res) => {
@@ -883,6 +883,195 @@ app.put('/api/procurement-items/:id/link-item', (req, res) => {
             res.json({ success: true, message: 'Item linked to registered_item_id' });
         }
     );
+});
+
+
+
+// Staff Lab
+// ambil inventaris
+app.get('/api/inventories', (req, res) => {
+
+    db.query(
+        "SELECT * FROM items WHERE jenis = 'inventaris'",
+        (err, results) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                data: results
+            });
+
+        }
+    );
+
+});
+
+// ambil habis pakai
+app.get('/api/bhps', (req, res) => {
+
+    db.query(
+        "SELECT * FROM items WHERE jenis = 'bhp'",
+        (err, results) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    error: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                data: results
+            });
+
+        }
+    );
+
+});
+
+// ambil maintenance
+app.get('/api/maintenances', (req, res) => {
+
+    const query = `
+        SELECT
+            m.*,
+            i.nama_barang
+        FROM maintenances m
+        JOIN items i
+            ON m.item_id = i.id
+        ORDER BY m.id DESC
+    `;
+
+    db.query(query, (err, results) => {
+
+        if (err) {
+            return res.status(500).json({
+                success: false,
+                error: err.message
+            });
+        }
+
+        res.json({
+            success: true,
+            data: results
+        });
+
+    });
+
+});
+
+// simpan maintenance dan pengurangan stok
+app.post('/api/maintenances', (req, res) => {
+
+    const {
+        item_id,
+        deskripsi_kerusakan,
+        solusi,
+        bhp_item_id,
+        jumlah_terpakai
+    } = req.body;
+
+    const maintenanceQuery = `
+        INSERT INTO maintenances
+        (
+            item_id,
+            deskripsi_kerusakan,
+            solusi,
+            tanggal_mulai
+        )
+        VALUES
+        (
+            ?, ?, ?, CURDATE()
+        )
+    `;
+
+    db.query(
+        maintenanceQuery,
+        [
+            item_id,
+            deskripsi_kerusakan,
+            solusi
+        ],
+        (err, result) => {
+
+            if (err) {
+                return res.status(500).json({
+                    success:false,
+                    error:err.message
+                });
+            }
+
+            const maintenanceId = result.insertId;
+
+            const bhpQuery = `
+                INSERT INTO maintenance_bhps
+                (
+                    maintenance_id,
+                    bhp_item_id,
+                    jumlah_terpakai
+                )
+                VALUES
+                (
+                    ?, ?, ?
+                )
+            `;
+
+            db.query(
+                bhpQuery,
+                [
+                    maintenanceId,
+                    bhp_item_id,
+                    jumlah_terpakai
+                ],
+                (err2) => {
+
+                    if (err2) {
+                        return res.status(500).json({
+                            success:false,
+                            error:err2.message
+                        });
+                    }
+
+                    db.query(
+                        `
+                        UPDATE items
+                        SET stok = stok - ?
+                        WHERE id = ?
+                        `,
+                        [
+                            jumlah_terpakai,
+                            bhp_item_id
+                        ],
+                        (err3) => {
+
+                            if (err3) {
+                                return res.status(500).json({
+                                    success:false,
+                                    error:err3.message
+                                });
+                            }
+
+                            res.json({
+                                success:true,
+                                message:'Maintenance berhasil disimpan'
+                            });
+
+                        }
+                    );
+
+                }
+            );
+
+        }
+    );
+
 });
 
 
